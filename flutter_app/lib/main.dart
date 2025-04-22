@@ -1,125 +1,265 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 
-void main() {
-  runApp(const MyApp());
+class _LogEntry {
+  final String text;
+  final bool isError;
+  final bool isSent;
+  final DateTime timestamp;
+
+  _LogEntry({required this.text, required this.isError, required this.isSent, required this.timestamp});
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+void main() => runApp(const SerialMonitorApp());
 
-  // This widget is the root of your application.
+class SerialMonitorApp extends StatelessWidget {
+  const SerialMonitorApp({super.key});
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Demo',
+      title: 'Serial Monitor',
+      home: const SerialMonitorScreen(),
       theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-        useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: Colors.blue,
+          brightness: Brightness.dark,
+        ),
       ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
+class SerialMonitorScreen extends StatefulWidget {
+  const SerialMonitorScreen({super.key});
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<SerialMonitorScreen> createState() => _SerialMonitorScreenState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
+  final List<String> baudRates = [
+    'custom', '50', '150', '200', '300', '600', '1200', '1800', '2400', '4800',
+    '9600', '19200', '38400', '57600', '115200'
+  ];
+  final List<String> lineEndings = [
+    'No Line Ending', 'New Line', 'Carriage Return', 'Both CR & NL'
+  ];
 
-  void _incrementCounter() {
-    setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
-    });
+  String? selectedPort;
+  String selectedBaud = '9600';
+  String? customBaud;
+  String selectedEnding = 'New Line';
+
+  bool isConnected = false;
+  bool autoScroll = true;
+  bool showTimestamp = false;
+
+  final TextEditingController inputController = TextEditingController();
+  final TextEditingController customBaudController = TextEditingController();
+  final ScrollController scrollController = ScrollController();
+
+  final List<_LogEntry> log = [];
+
+  late Process? pythonProcess;
+  StreamSubscription<String>? stdoutSub;
+  StreamSubscription<String>? stderrSub;
+
+  @override
+  void initState() {
+    super.initState();
+    routerStart();
   }
 
   @override
-  Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
-    return Scaffold(
-      appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
+  void dispose() {
+    inputController.dispose();
+    scrollController.dispose();
+    customBaudController.dispose();
+    routerExit();
+    super.dispose();
+  }
+
+  Future<void> routerStart() async {
+    pythonProcess = await Process.start('bin/router.exe', []);
+    stderrSub = pythonProcess!.stderr
+        .transform(utf8.decoder)
+        .transform(const LineSplitter())
+        .listen((line) => _handleOutput(line, true, false));
+    stdoutSub = pythonProcess!.stdout
+        .transform(utf8.decoder)
+        .transform(const LineSplitter())
+        .listen((line) => _handleOutput(line, false, false));
+  }
+
+  Future<void> routerExit() async {
+    stdoutSub?.cancel();
+    stderrSub?.cancel();
+    pythonProcess?.kill();
+  }
+
+  void portScan() async {
+    pythonProcess?.stdin.writeln(jsonEncode({"CMD":"LIST"}));
+  }
+
+  void portConnect() async {
+    if (selectedPort == null || (selectedBaud == 'custom' && customBaudController.text.isEmpty)) {
+      // TODO: 부족한 입력 처리(포커스 이동, 등)
+      return;
+    }
+
+    final baud = (selectedBaud == 'custom') ? customBaudController.text : selectedBaud;
+    pythonProcess?.stdin.writeln(jsonEncode({"CMD":"OPEN","PORT":selectedPort,"BAUD":baud}));
+    // TODO: 연결 요청 로그
+    setState(() => isConnected = true);
+  }
+
+  void portDisconnect() {
+    pythonProcess?.stdin.writeln(jsonEncode({"CMD": "CLOSE"}));
+    // TODO: 연결 해제 요청 로그
+    setState(() => isConnected = false);
+  }
+
+  void _handleOutput(String text, bool isError, bool isSent) {
+    final now = DateTime.now();
+    setState(() {
+      log.add(_LogEntry(
+        text: text,
+        isError: isError,
+        isSent: isSent,
+        timestamp: now,
+      ));
+    });
+    if (autoScroll) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        scrollController.animateTo(
+          scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      });
+    }
+  }
+
+  void sendData() {
+    if (!isConnected) return;
+    String data = inputController.text;
+    switch (selectedEnding) {
+      case 'New Line':        data += '\n'; break;
+      case 'Carriage Return': data += '\r'; break;
+      case 'Both CR & NL':    data += '\r\n'; break;
+    }
+    pythonProcess?.stdin.writeln(jsonEncode({"CMD": "WRITE", "DATA": data}));
+    _handleOutput(data, false, true);
+    inputController.clear();
+  }
+
+  Widget buildToolbar() => Row(
+    spacing: 16.0,
+    children: [
+      ElevatedButton(onPressed: portScan, child: const Text('스캔')),
+      DropdownButton<String>(
+        hint: const Text('Select Port'),
+        value: selectedPort,
+        onChanged: (val) => setState(() => selectedPort = val),
+        items: [
+          // TODO: 실전 구현시 실제 포트 목록 연동 필요
+          // DropdownMenuItem(value: 'COM6', child: Row(children: const [Icon(Icons.usb), Text('COM6 (Arduino Uno)')])),
+          // DropdownMenuItem(value: 'COM7', child: Row(children: const [Icon(Icons.usb), Text('COM7 (Unknown)')])),
+        ],
       ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
+      DropdownButton<String>(
+        value: selectedBaud,
+        onChanged: (val) => setState(() => selectedBaud = val!),
+        items: baudRates.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
+      ),
+      if (selectedBaud == 'custom')
+        SizedBox(width: 80, child: TextField(controller: customBaudController, keyboardType: TextInputType.number)),
+      (isConnected)
+        ? ElevatedButton(onPressed: portDisconnect, child: const Text('해제'))
+        : ElevatedButton(onPressed: portConnect, child: const Text('연결')),
+    ],
+  );
+
+  Widget buildTopControls() => Row(
+    spacing: 8.0,
+    children: [
+      IconButton(
+        icon: Icon(autoScroll ? Icons.check_box : Icons.check_box_outline_blank),
+        onPressed: () => setState(() => autoScroll = !autoScroll),
+        tooltip: '자동스크롤'
+      ),
+      IconButton(
+        icon: Icon(showTimestamp ? Icons.schedule : Icons.schedule_outlined),
+        onPressed: () => setState(() => showTimestamp = !showTimestamp),
+        tooltip: '타임스탬프 표시'
+      ),
+      IconButton(
+        icon: const Icon(Icons.delete),
+        onPressed: () => setState(() => log.clear()),
+        tooltip: '모든 출력 지우기'
+      )
+    ],
+  );
+
+  Widget buildOutputLog() => Expanded(
+    child: Container(
+      padding: const EdgeInsets.all(8.0),
+      color: Colors.black,
+      child: ListView.builder(
+        controller: scrollController,
+        itemCount: log.length,
+        itemBuilder: (context, index) {
+          final entry = log[index];
+          return Text(
+            '${showTimestamp ? '[${entry.timestamp.toIso8601String()}]' : ''}${entry.text}',
+            style: TextStyle(color: entry.isError ? Colors.red : entry.isSent ? Colors.green : Colors.white),
+          );
+        },
+      ),
+    ),
+  );
+
+  Widget buildBottomInput() => Row(
+    spacing: 16.0,
+    children: [
+      ElevatedButton(onPressed: sendData, child: const Text('전송')),
+      Expanded(
+        child: TextField(
+          controller: inputController,
+          enabled: isConnected,
+          decoration: InputDecoration(
+            hintText: isConnected ? '데이터 입력...' : 'Not connected. Select a port to connect'
+          ),
+          onSubmitted: (_) => sendData(),
+        ),
+      ),
+      DropdownButton<String>(
+        value: selectedEnding,
+        onChanged: (val) => setState(() => selectedEnding = val!),
+        items: lineEndings.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
+      ),
+    ],
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Serial Monitor')),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
         child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            const Text(
-              'You have pushed the button this many times:',
-            ),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
-            ),
+          spacing: 0.0,
+          children: [
+            buildToolbar(),
+            buildTopControls(),
+            buildOutputLog(),
+            buildBottomInput(),
           ],
         ),
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
-      ), // This trailing comma makes auto-formatting nicer for build methods.
     );
   }
 }
