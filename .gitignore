@@ -7,6 +7,8 @@ ENV/
 env.bak/
 venv.bak/
 
+.vscode/
+
 # Miscellaneous
 doc/
 tmp/
