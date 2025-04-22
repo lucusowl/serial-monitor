@@ -32,7 +32,6 @@ def main():
             if cmd['CMD'] == 'LIST':
                 list_ports_cmd()
             elif cmd['CMD'] == 'OPEN':
-                # TODO: port, baud 유효검사
                 ser = Serial(cmd['PORT'], cmd['BAUD'], timeout=1)
                 print(json.dumps({"EVENT":"OPENED", "PORT":cmd['PORT']}), flush=True)
                 threading.Thread(target=reader, daemon=True).start()
@@ -40,8 +39,8 @@ def main():
                 ser.close()
                 print(json.dumps({"EVENT":"CLOSED"}), flush=True)
             elif cmd['CMD'] == 'WRITE':
-                ser.write(bytes.fromhex(cmd['DATA']))
-                # ser.write(cmd['DATA'].encode('utf-8'))
+                # ser.write(bytes.fromhex(cmd['DATA']))
+                ser.write(cmd['DATA'].encode('utf-8'))
             else:
                 print(json.dumps({"EVENT":"ALERT","MESSAGE":"Invalid Protocol"}), flush=True)
 
