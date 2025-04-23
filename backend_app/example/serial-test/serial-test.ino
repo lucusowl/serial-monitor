@@ -3,9 +3,8 @@ int counter = 0;
 
 void setup() {
   Serial.begin(9600);
-  while (!Serial) {
-    ; // 시리얼 포트 연결 대기 (USB CDC인 보드에서만 필요)
-  }
+  while (!Serial) {} // 시리얼 포트 연결 대기 (USB CDC인 보드에서만 필요)
+  Serial.println("Port is available.");
 }
 
 void loop() {
