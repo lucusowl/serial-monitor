@@ -205,6 +205,7 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
   );
 
   Widget buildOutputLog() => Expanded(
+    child: SelectionArea(
     child: Container(
       padding: const EdgeInsets.all(8.0),
       color: Colors.black,
@@ -214,10 +215,11 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
         itemBuilder: (context, index) {
           final entry = log[index];
           return Text(
-            '${showTimestamp ? '[${entry.timestamp.toIso8601String()}]' : ''}${entry.text}',
-            style: TextStyle(color: entry.isError ? Colors.red : entry.isSent ? Colors.green : Colors.white),
+              '${showTimestamp ? '[${entry.timestamp.toIso8601String()}]' : ''}${entry.text}\n',
+              style: TextStyle(height: 0.7, color: entry.isError ? Colors.red : entry.isSent ? Colors.green : Colors.white),
           );
         },
+        ),
       ),
     ),
   );
