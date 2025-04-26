@@ -30,6 +30,7 @@ def main():
     def stdin_loop():
         nonlocal ser
         nonlocal reader_thread
+        port_name = ''
         for line in sys.stdin:
             cmd = json.loads(line)
             try:
@@ -39,19 +40,20 @@ def main():
                     ser = Serial(cmd['PORT'], cmd['BAUD'], timeout=1)
                     reader_thread = threading.Thread(target=reader, daemon=True)
                     reader_thread.start()
-                    print(json.dumps({"EVENT":"OPENED", "PORT":cmd['PORT']}), flush=True)
+                    port_name = cmd['PORT']
+                    print(json.dumps({"EVENT":"OPENED", "PORT":port_name}), flush=True)
                 elif cmd['CMD'] == 'CLOSE':
                     # reader 종료
                     ser.cancel_read()
                     ser.close()
-                    print(json.dumps({"EVENT":"CLOSED"}), flush=True)
+                    print(json.dumps({"EVENT":"CLOSED", "PORT":port_name}), flush=True)
                 elif cmd['CMD'] == 'WRITE':
                     # ser.write(bytes.fromhex(cmd['DATA']))
                     ser.write(cmd['DATA'].encode('utf-8'))
                 else:
-                    print(json.dumps({"EVENT":"ALERT","MESSAGE":"Invalid Protocol Detected"}), flush=True)
+                    print(json.dumps({"EVENT":"ALERT","MESSAGE":"Invalid Protocol Detected."}), flush=True)
             except Exception as e:
-                print(json.dumps({"EVENT":"ERROR","MESSAGE":str(e),"TRACEBACK":traceback.format_exc()}), flush=True, file=sys.stderr)
+                print(f"{e}\n{traceback.format_exc()}", flush=True, file=sys.stderr)
 
     def reader():
         while ser and ser.is_open:
@@ -60,7 +62,7 @@ def main():
                 if data:
                     print(json.dumps({"EVENT":"DATA","DATA":data.hex()}), flush=True)
             except Exception as e:
-                print(json.dumps({"EVENT":"ERROR","MESSAGE":str(e),"TRACEBACK":traceback.format_exc()}), flush=True, file=sys.stderr)
+                print(f"{e}\n{traceback.format_exc()}", flush=True, file=sys.stderr)
 
     stdin_thread = threading.Thread(target=stdin_loop, daemon=True)
     stdin_thread.start()

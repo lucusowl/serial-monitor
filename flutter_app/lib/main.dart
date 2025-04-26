@@ -3,13 +3,50 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 
-class _LogEntry {
-  final String text;
-  final bool isError;
-  final bool isSent;
-  final DateTime timestamp;
+class _PortEntry {
+  final String device;
+  final String? name;
+  final String? description;
+  final String? hwid;
+  final int? vid;
+  final int? pid;
+  final String? serial;
+  final String? location;
+  final String? manufacturer;
+  final String? product;
+  final String? interface;
 
-  _LogEntry({required this.text, required this.isError, required this.isSent, required this.timestamp});
+  _PortEntry({
+    required this.device,
+    this.name,
+    this.description,
+    this.hwid,
+    this.vid,
+    this.pid,
+    this.serial,
+    this.location,
+    this.manufacturer,
+    this.product,
+    this.interface,
+  });
+}
+
+class _LogEntry {
+  final StringBuffer text;
+  final bool isError;
+  final bool isFromPort;
+  final bool isFromClient;
+  final DateTime startTimestamp;
+  DateTime endTimestamp;
+
+  _LogEntry({
+    required this.text,
+    required this.isError,
+    required this.isFromPort,
+    required this.isFromClient,
+    required this.startTimestamp,
+    required this.endTimestamp,
+  });
 }
 
 void main() => runApp(const SerialMonitorApp());
@@ -40,6 +77,7 @@ class SerialMonitorScreen extends StatefulWidget {
 }
 
 class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
+  final List<_PortEntry> portEntries = [];
   final List<String> baudRates = [
     'custom', '50', '150', '200', '300', '600', '1200', '1800', '2400', '4800',
     '9600', '19200', '38400', '57600', '115200'
@@ -87,21 +125,28 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
     stderrSub = pythonProcess!.stderr
         .transform(utf8.decoder)
         .transform(const LineSplitter())
-        .listen((line) => _handleOutput(line, true, false));
+        .listen(
+          (line) => _handleError(errorMessage: line, isFromClient: false),
+          onError: (error) => _handleError(errorMessage: error),
+        );
     stdoutSub = pythonProcess!.stdout
         .transform(utf8.decoder)
         .transform(const LineSplitter())
-        .listen((line) => _handleOutput(line, false, false));
+        .listen(
+          (line) => _handleOutput(text: line),
+          onError: (error) => _handleError(errorMessage: error),
+        );
   }
 
   Future<void> routerExit() async {
-    stdoutSub?.cancel();
-    stderrSub?.cancel();
+    await stdoutSub?.cancel();
+    await stderrSub?.cancel();
     pythonProcess?.kill();
   }
 
   void portScan() async {
     pythonProcess?.stdin.writeln(jsonEncode({"CMD":"LIST"}));
+    // TODO: 연결가능 목록 요청 로그
   }
 
   void portConnect() async {
@@ -113,25 +158,138 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
     final baud = (selectedBaud == 'custom') ? customBaudController.text : selectedBaud;
     pythonProcess?.stdin.writeln(jsonEncode({"CMD":"OPEN","PORT":selectedPort,"BAUD":baud}));
     // TODO: 연결 요청 로그
-    setState(() => isConnected = true);
+    setState(() => isConnected = true); // 연결 완료를 router에서 받았을 때로 변경
   }
 
   void portDisconnect() {
     pythonProcess?.stdin.writeln(jsonEncode({"CMD": "CLOSE"}));
     // TODO: 연결 해제 요청 로그
-    setState(() => isConnected = false);
+    setState(() => isConnected = false); // 연결 해제 완료를 router에서 받았을 때로 변경
   }
 
-  void _handleOutput(String text, bool isError, bool isSent) {
-    final now = DateTime.now();
+  /// 인자 유효성  
+  /// 프로토콜 구분  
+  /// 프로토콜 메세지 설정  
+  /// 구분된 프로토콜 각 후처리 설정  
+  void _handleOutput({
+    required String text,
+    bool isFromClient = false,
+  }) {
+    late final String logMessage;
+    bool isFromPort = false; // only EVENT.DATA -> true
+    final Map<String,dynamic> messageObject = jsonDecode(text);
+
+    if (messageObject.containsKey("EVENT")) { // router/server(only DATA) -> client
+      switch (messageObject["EVENT"]) {
+        case "DATA":
+          // 후처리 :: 문자 변환
+          // messageObject["DATA"] :: hex-Stirng -> utf8(기본)
+          logMessage = messageObject["DATA"];
+          isFromPort = true;
+          break;
+        case "INIT": logMessage = "Router 준비 완료"; break;
+        case "OPENED": logMessage = "Port(${messageObject["PORT"] ?? "(No Port)"}) 연결 성공"; break;
+        case "CLOSED": logMessage = "Port(${messageObject["PORT"] ?? "(No Port)"}) 연결 해제 성공"; break;
+        case "PORT":
+          // 후처리:: 목록 갱신
+          portEntries.clear();
+          for (Map<String,dynamic> portInfo in messageObject["PORTS"]){
+            portEntries.add(_PortEntry(
+              device: portInfo["DEVICE"],
+              name: portInfo["name"],
+              description: portInfo["description"],
+              hwid: portInfo["hwid"],
+              vid: portInfo["vid"],
+              pid: portInfo["pid"],
+              serial: portInfo["serial"],
+              location: portInfo["location"],
+              manufacturer: portInfo["manufacturer"],
+              product: portInfo["product"],
+              interface: portInfo["interface"],
+            ));
+          }
+          logMessage = "Port 연결 가능 목록 갱신 성공";
+          break;
+        case "ALERT": logMessage = messageObject["MESSAGE"]; break;
+        case "ERROR":
+          _handleError(
+            errorMessage: messageObject["MESSAGE"],
+            // traceback: messageObject["TRACEBACK"],
+            isFromClient: isFromClient,
+          );
+          break;
+        default: 
+          _handleError(
+            errorMessage: "Invalid Protocol Detected. Type (${messageObject['EVENT']}) of EVENT is not exist",
+            isFromClient: isFromClient
+          );
+          return;
+      }
+    } else if (messageObject.containsKey("CMD")) { // client -> router
+      switch (messageObject["CMD"]) {
+        case "WRITE": logMessage = messageObject["DATA"] ?? ""; break;
+        case "OPEN": logMessage = "Port (${(messageObject["PORT"]) ?? "(No Port)"}, baud: ${messageObject["BAUD"] ?? "(No baud)"})에 연결 요청"; break;
+        case "CLOSE": logMessage = "Port 연결 해제 요청"; break;
+        case "LIST": logMessage = "Port 연결 가능 목록 요청"; break;
+        default:
+          _handleError(
+            errorMessage: "Invalid Protocol Detected. Type (${messageObject['CMD']}) of CMD is not exist", 
+            isFromClient: isFromClient
+          );
+          return;
+      }
+    } else {
+      _handleError(
+        errorMessage: "Invalid Protocol Detected. Require Type of Protocol.",
+        isFromClient: isFromClient,
+      );
+      return;
+    }
+    _logger(
+      message: logMessage,
+      isFromPort: isFromPort,
+      isFromClient: isFromClient,
+    );
+  }
+
+  void _handleError({
+    required String errorMessage,
+    bool isFromClient = true,
+    // dynamic stackTrace,
+  }) {
+    _logger(
+      message: errorMessage,
+      isError: true,
+      isFromClient: isFromClient,
+    );
+  }
+
+  void _logger({
+    required String message,
+    bool isError = false,
+    bool isFromPort = false,
+    bool isFromClient = true,
+  }) {
+    // 로깅 시간을 기준
+    final DateTime now = DateTime.now();
+
+    // if (이전 로그와 합쳐야 하는 경우 == DATA 내용이 아직 구분자로 끝나지 않은 경우) {
+    //   setState(() {
+    //     log.last.text.write(text);
+    //     log.last.timestamp = now;
+    //   });
+    // }
     setState(() {
       log.add(_LogEntry(
-        text: text,
+        text: StringBuffer(message),
         isError: isError,
-        isSent: isSent,
-        timestamp: now,
+        isFromPort: isFromPort,
+        isFromClient: isFromClient,
+        startTimestamp: now,
+        endTimestamp: now,
       ));
     });
+    // outputLog move to last line
     if (autoScroll) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         scrollController.animateTo(
@@ -152,7 +310,7 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
       case 'Both CR & NL':    data += '\r\n'; break;
     }
     pythonProcess?.stdin.writeln(jsonEncode({"CMD": "WRITE", "DATA": data}));
-    _handleOutput(data, false, true);
+    _handleOutput(text: jsonEncode({"CMD": "WRITE", "DATA": data}), isFromClient: true);
     inputController.clear();
   }
 
@@ -164,11 +322,8 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
         hint: const Text('Select Port'),
         value: selectedPort,
         onChanged: (val) => setState(() => selectedPort = val),
-        items: [
-          // TODO: 실전 구현시 실제 포트 목록 연동 필요
-          // DropdownMenuItem(value: 'COM6', child: Row(children: const [Icon(Icons.usb), Text('COM6 (Arduino Uno)')])),
-          // DropdownMenuItem(value: 'COM7', child: Row(children: const [Icon(Icons.usb), Text('COM7 (Unknown)')])),
-        ],
+        items: portEntries.map((e) => DropdownMenuItem(value: e.device, child: Row(children: [Icon(Icons.usb), Text(e.device)]))).toList(),
+        // TODO: 인식된 디바이스 정보 표기, e.g. 'COM6 (Arduino Uno)'
       ),
       DropdownButton<String>(
         value: selectedBaud,
@@ -206,19 +361,19 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
 
   Widget buildOutputLog() => Expanded(
     child: SelectionArea(
-    child: Container(
-      padding: const EdgeInsets.all(8.0),
-      color: Colors.black,
-      child: ListView.builder(
-        controller: scrollController,
-        itemCount: log.length,
-        itemBuilder: (context, index) {
-          final entry = log[index];
-          return Text(
-              '${showTimestamp ? '[${entry.timestamp.toIso8601String()}]' : ''}${entry.text}\n',
-              style: TextStyle(height: 0.7, color: entry.isError ? Colors.red : entry.isSent ? Colors.green : Colors.white),
-          );
-        },
+      child: Container(
+        padding: const EdgeInsets.all(8.0),
+        color: Colors.black,
+        child: ListView.builder(
+          controller: scrollController,
+          itemCount: log.length,
+          itemBuilder: (context, index) {
+            final entry = log[index];
+            return Text(
+              '${showTimestamp ? '[${entry.endTimestamp.toIso8601String()}]' : ''}${entry.text}\n',
+              style: TextStyle(height: 0.7, color: entry.isError ? Colors.red : entry.isFromClient ? Colors.green : Colors.white),
+            );
+          },
         ),
       ),
     ),
