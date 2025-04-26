@@ -145,8 +145,9 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
   }
 
   void portScan() async {
-    pythonProcess?.stdin.writeln(jsonEncode({"CMD":"LIST"}));
-    // TODO: 연결가능 목록 요청 로그
+    String messageString = jsonEncode(const {"CMD": "LIST"});
+    pythonProcess?.stdin.writeln(messageString);
+    _handleOutput(text: messageString, isFromClient: true);
   }
 
   void portConnect() async {
@@ -156,15 +157,29 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
     }
 
     final baud = (selectedBaud == 'custom') ? customBaudController.text : selectedBaud;
-    pythonProcess?.stdin.writeln(jsonEncode({"CMD":"OPEN","PORT":selectedPort,"BAUD":baud}));
-    // TODO: 연결 요청 로그
-    setState(() => isConnected = true); // 연결 완료를 router에서 받았을 때로 변경
+    String messageString = jsonEncode({"CMD":"OPEN","PORT":selectedPort!,"BAUD":baud});
+    pythonProcess?.stdin.writeln(messageString);
+    _handleOutput(text: messageString, isFromClient: true);
   }
 
   void portDisconnect() {
-    pythonProcess?.stdin.writeln(jsonEncode({"CMD": "CLOSE"}));
-    // TODO: 연결 해제 요청 로그
-    setState(() => isConnected = false); // 연결 해제 완료를 router에서 받았을 때로 변경
+    String messageString = jsonEncode({"CMD": "CLOSE", "PORT":selectedPort!});
+    pythonProcess?.stdin.writeln(messageString);
+    _handleOutput(text: messageString, isFromClient: true);
+  }
+
+  void sendData() {
+    if (!isConnected) return;
+    String data = inputController.text;
+    switch (selectedEnding) {
+      case 'New Line':        data += '\n'; break;
+      case 'Carriage Return': data += '\r'; break;
+      case 'Both CR & NL':    data += '\r\n'; break;
+    }
+    String messageString = jsonEncode({"CMD": "WRITE", "DATA": data});
+    pythonProcess?.stdin.writeln(messageString);
+    _handleOutput(text: messageString, isFromClient: true);
+    inputController.clear();
   }
 
   /// 인자 유효성  
@@ -188,8 +203,14 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
           isFromPort = true;
           break;
         case "INIT": logMessage = "Router 준비 완료"; break;
-        case "OPENED": logMessage = "Port(${messageObject["PORT"] ?? "(No Port)"}) 연결 성공"; break;
-        case "CLOSED": logMessage = "Port(${messageObject["PORT"] ?? "(No Port)"}) 연결 해제 성공"; break;
+        case "OPENED":
+          setState(() => isConnected = true);
+          logMessage = "Port (${messageObject["PORT"] ?? "(No Port)"}) 연결 성공";
+          break;
+        case "CLOSED":
+          setState(() => isConnected = false);
+          logMessage = "Port (${messageObject["PORT"] ?? "(No Port)"}) 연결 해제 성공";
+          break;
         case "PORT":
           // 후처리:: 목록 갱신
           portEntries.clear();
@@ -208,7 +229,7 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
               interface: portInfo["interface"],
             ));
           }
-          logMessage = "Port 연결 가능 목록 갱신 성공";
+          logMessage = "연결 가능 Port 목록 갱신 성공";
           break;
         case "ALERT": logMessage = messageObject["MESSAGE"]; break;
         case "ERROR":
@@ -229,8 +250,8 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
       switch (messageObject["CMD"]) {
         case "WRITE": logMessage = messageObject["DATA"] ?? ""; break;
         case "OPEN": logMessage = "Port (${(messageObject["PORT"]) ?? "(No Port)"}, baud: ${messageObject["BAUD"] ?? "(No baud)"})에 연결 요청"; break;
-        case "CLOSE": logMessage = "Port 연결 해제 요청"; break;
-        case "LIST": logMessage = "Port 연결 가능 목록 요청"; break;
+        case "CLOSE": logMessage = "Port (${(messageObject["PORT"]) ?? "(No Port)"}) 연결 해제 요청"; break;
+        case "LIST": logMessage = "연결 가능 Port 목록 요청"; break;
         default:
           _handleError(
             errorMessage: "Invalid Protocol Detected. Type (${messageObject['CMD']}) of CMD is not exist", 
@@ -299,19 +320,6 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
         );
       });
     }
-  }
-
-  void sendData() {
-    if (!isConnected) return;
-    String data = inputController.text;
-    switch (selectedEnding) {
-      case 'New Line':        data += '\n'; break;
-      case 'Carriage Return': data += '\r'; break;
-      case 'Both CR & NL':    data += '\r\n'; break;
-    }
-    pythonProcess?.stdin.writeln(jsonEncode({"CMD": "WRITE", "DATA": data}));
-    _handleOutput(text: jsonEncode({"CMD": "WRITE", "DATA": data}), isFromClient: true);
-    inputController.clear();
   }
 
   Widget buildToolbar() => Row(
