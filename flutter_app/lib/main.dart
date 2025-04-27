@@ -127,14 +127,14 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
         .transform(const LineSplitter())
         .listen(
           (line) => _handleError(errorMessage: line, isFromClient: false),
-          onError: (error) => _handleError(errorMessage: error),
+          onError: (error) => _handleError(errorMessage: error.toString()),
         );
     stdoutSub = pythonProcess!.stdout
         .transform(utf8.decoder)
         .transform(const LineSplitter())
         .listen(
-          (line) => _handleOutput(text: line),
-          onError: (error) => _handleError(errorMessage: error),
+          (line) => _handleOutput(messageObject: jsonDecode(line)),
+          onError: (error) => _handleError(errorMessage: error.toString()),
         );
   }
 
@@ -145,9 +145,9 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
   }
 
   void portScan() async {
-    String messageString = jsonEncode(const {"CMD": "LIST"});
-    pythonProcess?.stdin.writeln(messageString);
-    _handleOutput(text: messageString, isFromClient: true);
+    Map<String,dynamic> messageObject = const {"CMD": "LIST"};
+    pythonProcess?.stdin.writeln(jsonEncode(messageObject));
+    _handleOutput(messageObject: messageObject, isFromClient: true);
   }
 
   void portConnect() async {
@@ -157,15 +157,20 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
     }
 
     final baud = (selectedBaud == 'custom') ? customBaudController.text : selectedBaud;
-    String messageString = jsonEncode({"CMD":"OPEN","PORT":selectedPort!,"BAUD":baud});
-    pythonProcess?.stdin.writeln(messageString);
-    _handleOutput(text: messageString, isFromClient: true);
+    // 유효성 검사 처리
+    Map<String,dynamic> messageObject = {"CMD":"OPEN","PORT":selectedPort!,"BAUD":baud};
+    pythonProcess?.stdin.writeln(jsonEncode(messageObject));
+    _handleOutput(messageObject: messageObject, isFromClient: true);
   }
 
   void portDisconnect() {
-    String messageString = jsonEncode({"CMD": "CLOSE", "PORT":selectedPort!});
-    pythonProcess?.stdin.writeln(messageString);
-    _handleOutput(text: messageString, isFromClient: true);
+    if (selectedPort == null) {
+      // TODO: 유효성 에러 처리
+      return;
+    }
+    Map<String,dynamic> messageObject = {"CMD": "CLOSE", "PORT":selectedPort!};
+    pythonProcess?.stdin.writeln(jsonEncode(messageObject));
+    _handleOutput(messageObject: messageObject, isFromClient: true);
   }
 
   void sendData() {
@@ -176,9 +181,9 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
       case 'Carriage Return': data += '\r'; break;
       case 'Both CR & NL':    data += '\r\n'; break;
     }
-    String messageString = jsonEncode({"CMD": "WRITE", "DATA": data});
-    pythonProcess?.stdin.writeln(messageString);
-    _handleOutput(text: messageString, isFromClient: true);
+    Map<String,dynamic> messageObject = {"CMD": "WRITE", "DATA": data};
+    pythonProcess?.stdin.writeln(jsonEncode(messageObject));
+    _handleOutput(messageObject: messageObject, isFromClient: true);
     inputController.clear();
   }
 
@@ -187,12 +192,11 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
   /// 프로토콜 메세지 설정  
   /// 구분된 프로토콜 각 후처리 설정  
   void _handleOutput({
-    required String text,
+    required Map<String,dynamic> messageObject,
     bool isFromClient = false,
   }) {
     late final String logMessage;
     bool isFromPort = false; // only EVENT.DATA -> true
-    final Map<String,dynamic> messageObject = jsonDecode(text);
 
     if (messageObject.containsKey("EVENT")) { // router/server(only DATA) -> client
       switch (messageObject["EVENT"]) {
@@ -246,7 +250,7 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
           );
           return;
       }
-    } else if (messageObject.containsKey("CMD")) { // client -> router
+    } else if (messageObject.containsKey("CMD")) { // client -> router/server(only WRITE)
       switch (messageObject["CMD"]) {
         case "WRITE": logMessage = messageObject["DATA"] ?? ""; break;
         case "OPEN": logMessage = "Port (${(messageObject["PORT"]) ?? "(No Port)"}, baud: ${messageObject["BAUD"] ?? "(No baud)"})에 연결 요청"; break;
@@ -276,7 +280,7 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
   void _handleError({
     required String errorMessage,
     bool isFromClient = true,
-    // dynamic stackTrace,
+    // StackTrace? stackTrace,
   }) {
     _logger(
       message: errorMessage,
@@ -297,7 +301,7 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
     // if (이전 로그와 합쳐야 하는 경우 == DATA 내용이 아직 구분자로 끝나지 않은 경우) {
     //   setState(() {
     //     log.last.text.write(text);
-    //     log.last.timestamp = now;
+    //     log.last.endTimestamp = now;
     //   });
     // }
     setState(() {
@@ -323,17 +327,19 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
   }
 
   Widget buildToolbar() => Row(
-    spacing: 16.0,
+    spacing: 8.0,
     children: [
       ElevatedButton(onPressed: portScan, child: const Text('스캔')),
       DropdownButton<String>(
+        padding: const EdgeInsets.symmetric(horizontal: 8.0),
         hint: const Text('Select Port'),
         value: selectedPort,
         onChanged: (val) => setState(() => selectedPort = val),
-        items: portEntries.map((e) => DropdownMenuItem(value: e.device, child: Row(children: [Icon(Icons.usb), Text(e.device)]))).toList(),
+        items: portEntries.map((e) => DropdownMenuItem(value: e.device, child: Row(spacing: 8.0, children: [Icon(Icons.usb), Text(e.device)]))).toList(),
         // TODO: 인식된 디바이스 정보 표기, e.g. 'COM6 (Arduino Uno)'
       ),
       DropdownButton<String>(
+        padding: const EdgeInsets.symmetric(horizontal: 8.0),
         value: selectedBaud,
         onChanged: (val) => setState(() => selectedBaud = val!),
         items: baudRates.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
@@ -402,6 +408,7 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
         ),
       ),
       DropdownButton<String>(
+        padding: const EdgeInsets.symmetric(horizontal: 8.0),
         value: selectedEnding,
         onChanged: (val) => setState(() => selectedEnding = val!),
         items: lineEndings.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
@@ -419,6 +426,7 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
           spacing: 0.0,
           children: [
             buildToolbar(),
+            const Divider(),
             buildTopControls(),
             buildOutputLog(),
             buildBottomInput(),
