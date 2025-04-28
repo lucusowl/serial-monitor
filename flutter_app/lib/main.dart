@@ -128,14 +128,26 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
         .transform(const LineSplitter())
         .listen(
           (line) => _handleError(errorMessage: line, isFromClient: false),
-          onError: (error) => _handleError(errorMessage: error.toString()),
+          onError: (error, stackTrace) {
+            if (error is FormatException) {
+              _handleError(errorMessage: "비정상적인 형식의 값이 전달되었습니다. 통신 연결을 확인해주세요.");
+            } else {
+              _handleError(errorMessage: error.toString(), stackTrace: stackTrace);
+            }
+          },
         );
     stdoutSub = pythonProcess!.stdout
         .transform(utf8.decoder)
         .transform(const LineSplitter())
         .listen(
           (line) => _handleOutput(messageObject: jsonDecode(line)),
-          onError: (error) => _handleError(errorMessage: error.toString()),
+          onError: (error, stackTrace) {
+            if (error is FormatException) {
+              _handleError(errorMessage: "비정상적인 형식의 값이 전달되었습니다. 통신 연결을 확인해주세요.");
+            } else {
+              _handleError(errorMessage: error.toString(), stackTrace: stackTrace);
+            }
+          },
         );
   }
 
@@ -286,10 +298,10 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
   void _handleError({
     required String errorMessage,
     bool isFromClient = true,
-    // StackTrace? stackTrace,
+    StackTrace? stackTrace,
   }) {
     _logger(
-      message: errorMessage,
+      message: "$errorMessage${(stackTrace == null) ? '': '\n$stackTrace'}",
       isError: true,
       isFromClient: isFromClient,
     );
