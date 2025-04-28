@@ -32,7 +32,7 @@ class _PortEntry {
 }
 
 class _LogEntry {
-  final StringBuffer text;
+  final List<int> content;
   final bool isError;
   final bool isFromPort;
   final bool isFromClient;
@@ -40,7 +40,7 @@ class _LogEntry {
   DateTime endTimestamp;
 
   _LogEntry({
-    required this.text,
+    required this.content,
     required this.isError,
     required this.isFromPort,
     required this.isFromClient,
@@ -176,15 +176,21 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
 
   void sendData() {
     if (!isConnected) return;
+      final utf8Encoder = Utf8Encoder();
     String data = inputController.text;
     switch (selectedEnding) {
       case 'New Line':        data += '\n'; break;
       case 'Carriage Return': data += '\r'; break;
       case 'Both CR & NL':    data += '\r\n'; break;
     }
-    Map<String,dynamic> messageObject = {"CMD": "WRITE", "DATA": data};
-    pythonProcess?.stdin.writeln(jsonEncode(messageObject));
-    _handleOutput(messageObject: messageObject, isFromClient: true);
+    // string -> Uint8List(utf8) -> hex-string
+    final StringBuffer buffer = StringBuffer();
+    for (var byte in utf8Encoder.convert(data)) {
+      buffer.write(byte.toRadixString(16).padLeft(2, '0'));
+    }
+    Map<String,dynamic> messageObject = {"CMD": "WRITE", "DATA": buffer.toString()};
+    pythonProcess?.stdin.writeln(jsonEncode(messageObject)); // string -> hex-string
+    _handleOutput(messageObject: {"CMD": "WRITE", "DATA": data}, isFromClient: true); // string -> string
     inputController.clear();
   }
 
@@ -300,9 +306,9 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
 
     // hex-Stirng -> utf8(기본)
     if (isFromPort) {
-      final utf8Decoder = Utf8Decoder(allowMalformed: true);
       final List<int> bytes = <int>[];
       for (var i=0; i < message.length; i+=2) {
+        // hex-string -> List<int>
         final String byte = message.substring(i, i+2);
         try {
           bytes.add(int.parse(byte, radix:16));
@@ -314,11 +320,11 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
           );
           return;
         }
-        if (byte == '0a') {
+        if (bytes.last == 0x0A) {
           if (flagDataLineFeed) {
             setState(() {
               log.add(_LogEntry(
-                text: StringBuffer(utf8Decoder.convert(bytes)),
+                content: bytes,
                 isError: isError,
                 isFromPort: isFromPort,
                 isFromClient: isFromClient,
@@ -329,7 +335,7 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
           } else {
             // 이전 로그와 합치기
             setState(() {
-              log.last.text.write(utf8Decoder.convert(bytes));
+              log.last.content.addAll(bytes);
               log.last.endTimestamp = now;
             });
           }
@@ -342,7 +348,7 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
         if (flagDataLineFeed) {
           setState(() {
             log.add(_LogEntry(
-              text: StringBuffer(utf8Decoder.convert(bytes)),
+              content: bytes,
               isError: isError,
               isFromPort: isFromPort,
               isFromClient: isFromClient,
@@ -353,7 +359,7 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
         } else {
           // 이전 로그와 합치기
           setState(() {
-            log.last.text.write(utf8Decoder.convert(bytes));
+            log.last.content.addAll(bytes);
             log.last.endTimestamp = now;
           });
         }
@@ -364,9 +370,10 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
         }
       }
     } else {
+      final utf8Encoder = Utf8Encoder();
       setState(() {
         log.add(_LogEntry(
-          text: StringBuffer(message),
+          content: utf8Encoder.convert(message), // String -> List<int>
           isError: isError,
           isFromPort: isFromPort,
           isFromClient: isFromClient,
@@ -389,12 +396,13 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
     }
   }
 
-  String _logConvertOutput(StringBuffer buffer) {
-    final content = buffer.toString();
-    if (content.endsWith('\n')) {
-      return content.substring(0, content.length-1);
+  String _logConvertOutput(List<int> buffer) {
+    if (buffer.isEmpty) return '';
+    final utf8Decoder = Utf8Decoder(allowMalformed: true);
+    if (buffer.last == 0x0A) {
+      return utf8Decoder.convert(buffer, 0, buffer.length-1);
     } else {
-      return content;
+      return utf8Decoder.convert(buffer);
     }
   }
 
@@ -472,8 +480,8 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
               logSubject = 'Router';
             }
             return Text(
-              '${showDetail ? '[${entry.endTimestamp.toIso8601String()}][$logSubject]' : ''}${_logConvertOutput(entry.text)}',
-              style: TextStyle(/* height: 0.7, */color: logColor),
+              '${showDetail ? '[${entry.endTimestamp.toIso8601String()}][$logSubject]' : ''}${_logConvertOutput(entry.content)}',
+              style: TextStyle(color: logColor),
             );
           },
         ),

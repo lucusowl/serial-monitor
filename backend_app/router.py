@@ -48,8 +48,7 @@ def main():
                     ser.close()
                     print(json.dumps({"EVENT":"CLOSED", "PORT":port_name}), flush=True)
                 elif cmd['CMD'] == 'WRITE':
-                    # ser.write(bytes.fromhex(cmd['DATA']))
-                    ser.write(cmd['DATA'].encode('utf-8'))
+                    ser.write(bytes.fromhex(cmd['DATA']))
                 else:
                     print(json.dumps({"EVENT":"ALERT","MESSAGE":"Invalid Protocol Detected."}), flush=True)
             except Exception as e:
