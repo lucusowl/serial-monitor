@@ -251,6 +251,16 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
               interface: portInfo["interface"],
             ));
           }
+          if (selectedPort != null) {
+            bool flagPortInclude = false;
+            for (_PortEntry port in portEntries) {
+              if (port.device == selectedPort) {
+                flagPortInclude = true;
+                break;
+              }
+            }
+            if (!flagPortInclude) {selectedPort = null;}
+          }
           logMessage = "연결 가능 Port 목록 갱신 성공";
           break;
         case "ALERT": logMessage = messageObject["MESSAGE"]; break;
