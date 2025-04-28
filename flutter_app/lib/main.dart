@@ -93,12 +93,13 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
 
   bool isConnected = false;
   bool autoScroll = true;
-  bool showTimestamp = false;
+  bool showDetail = false;
 
   final TextEditingController inputController = TextEditingController();
   final TextEditingController customBaudController = TextEditingController();
   final ScrollController scrollController = ScrollController();
 
+  bool flagDataLineFeed = true;
   final List<_LogEntry> log = [];
 
   late Process? pythonProcess;
@@ -201,8 +202,7 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
     if (messageObject.containsKey("EVENT")) { // router/server(only DATA) -> client
       switch (messageObject["EVENT"]) {
         case "DATA":
-          // 후처리 :: 문자 변환
-          // messageObject["DATA"] :: hex-Stirng -> utf8(기본)
+          // 후처리 :: 문자 처리 -> _logger
           logMessage = messageObject["DATA"];
           isFromPort = true;
           break;
@@ -298,22 +298,85 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
     // 로깅 시간을 기준
     final DateTime now = DateTime.now();
 
-    // if (이전 로그와 합쳐야 하는 경우 == DATA 내용이 아직 구분자로 끝나지 않은 경우) {
-    //   setState(() {
-    //     log.last.text.write(text);
-    //     log.last.endTimestamp = now;
-    //   });
-    // }
-    setState(() {
-      log.add(_LogEntry(
-        text: StringBuffer(message),
-        isError: isError,
-        isFromPort: isFromPort,
-        isFromClient: isFromClient,
-        startTimestamp: now,
-        endTimestamp: now,
-      ));
-    });
+    // hex-Stirng -> utf8(기본)
+    if (isFromPort) {
+      final utf8Decoder = Utf8Decoder(allowMalformed: true);
+      final List<int> bytes = <int>[];
+      for (var i=0; i < message.length; i+=2) {
+        final String byte = message.substring(i, i+2);
+        try {
+          bytes.add(int.parse(byte, radix:16));
+        } on FormatException {
+          // 에러 전달, hexstr 올바르지 않은 형식
+          _handleError(
+            errorMessage: "Invalid Hexadecimal String Detected.\n$message",
+            isFromClient: isFromClient,
+          );
+          return;
+        }
+        if (byte == '0a') {
+          if (flagDataLineFeed) {
+            setState(() {
+              log.add(_LogEntry(
+                text: StringBuffer(utf8Decoder.convert(bytes)),
+                isError: isError,
+                isFromPort: isFromPort,
+                isFromClient: isFromClient,
+                startTimestamp: now,
+                endTimestamp: now,
+              ));
+            });
+          } else {
+            // 이전 로그와 합치기
+            setState(() {
+              log.last.text.write(utf8Decoder.convert(bytes));
+              log.last.endTimestamp = now;
+            });
+          }
+          bytes.clear();
+          flagDataLineFeed = true;
+        }
+      }
+      // 남은 문자 추가
+      if (bytes.isNotEmpty) {
+        if (flagDataLineFeed) {
+          setState(() {
+            log.add(_LogEntry(
+              text: StringBuffer(utf8Decoder.convert(bytes)),
+              isError: isError,
+              isFromPort: isFromPort,
+              isFromClient: isFromClient,
+              startTimestamp: now,
+              endTimestamp: now,
+            ));
+          });
+        } else {
+          // 이전 로그와 합치기
+          setState(() {
+            log.last.text.write(utf8Decoder.convert(bytes));
+            log.last.endTimestamp = now;
+          });
+        }
+        if (bytes.last == 0x0A) {
+          flagDataLineFeed = true;
+        } else {
+          flagDataLineFeed = false; // 이 다음은 합쳐야 함
+        }
+      }
+    } else {
+      setState(() {
+        log.add(_LogEntry(
+          text: StringBuffer(message),
+          isError: isError,
+          isFromPort: isFromPort,
+          isFromClient: isFromClient,
+          startTimestamp: now,
+          endTimestamp: now,
+        ));
+      });
+      flagDataLineFeed = true; // 데이터 수신도중 다른 메세지를 받으면 자동 줄바꿈
+    }
+
     // outputLog move to last line
     if (autoScroll) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -323,6 +386,15 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
           curve: Curves.easeOut,
         );
       });
+    }
+  }
+
+  String _logConvertOutput(StringBuffer buffer) {
+    final content = buffer.toString();
+    if (content.endsWith('\n')) {
+      return content.substring(0, content.length-1);
+    } else {
+      return content;
     }
   }
 
@@ -361,9 +433,9 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
         tooltip: '자동스크롤'
       ),
       IconButton(
-        icon: Icon(showTimestamp ? Icons.schedule : Icons.schedule_outlined),
-        onPressed: () => setState(() => showTimestamp = !showTimestamp),
-        tooltip: '타임스탬프 표시'
+        icon: Icon(showDetail ? Icons.schedule : Icons.schedule_outlined),
+        onPressed: () => setState(() => showDetail = !showDetail),
+        tooltip: '상세내용 표시'
       ),
       IconButton(
         icon: const Icon(Icons.delete),
@@ -383,9 +455,25 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
           itemCount: log.length,
           itemBuilder: (context, index) {
             final entry = log[index];
+            late final Color logColor;
+            late final String logSubject;
+            if (entry.isError) {
+              logColor = Colors.red;
+              if (entry.isFromClient) {logSubject = 'Client';}
+              else {logSubject = 'Router';}
+            } else if (entry.isFromPort) {
+              logColor = Colors.white;
+              logSubject = 'Port($selectedPort)';
+            } else if (entry.isFromClient) {
+              logColor = Colors.green;
+              logSubject = 'Client';
+            } else {
+              logColor = Colors.yellow;
+              logSubject = 'Router';
+            }
             return Text(
-              '${showTimestamp ? '[${entry.endTimestamp.toIso8601String()}]' : ''}${entry.text}\n',
-              style: TextStyle(height: 0.7, color: entry.isError ? Colors.red : entry.isFromClient ? Colors.green : Colors.white),
+              '${showDetail ? '[${entry.endTimestamp.toIso8601String()}][$logSubject]' : ''}${_logConvertOutput(entry.text)}',
+              style: TextStyle(/* height: 0.7, */color: logColor),
             );
           },
         ),
