@@ -29,6 +29,20 @@ class _PortEntry {
     this.product,
     this.interface,
   });
+
+  String info() {
+    return 'device:$device\n'
+    'name:$name\n'
+    'description:$description\n'
+    'hwid:$hwid\n'
+    'vid:$vid(0x${vid?.toRadixString(16)})\n'
+    'pid:$pid(0x${pid?.toRadixString(16)})\n'
+    'serial:$serial\n'
+    'location:$location\n'
+    'manufacturer:$manufacturer\n'
+    'product:$product\n'
+    'interface:$interface';
+  }
 }
 
 class _LogEntry {
@@ -457,6 +471,7 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
                   spacing: 8.0,
                   children: [
                     Tooltip(
+                      message: e.info(),
                       child: const Icon(Icons.usb)
                     ),
                     Text(e.device)
