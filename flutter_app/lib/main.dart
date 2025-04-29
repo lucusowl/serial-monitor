@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 
+const routerMinVersion = "v0.5.3";
+
 class _PortEntry {
   final String device;
   final String? name;
@@ -63,6 +65,13 @@ class _LogEntry {
   });
 }
 
+enum ProcessState {
+  wait,
+  enabled,
+  disabled,
+  disabledFromUnknown, // 예기지 못한 오류
+}
+
 void main() => runApp(const SerialMonitorApp());
 
 class SerialMonitorApp extends StatelessWidget {
@@ -119,7 +128,9 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
   bool flagDataLineFeed = true;
   final List<_LogEntry> log = [];
 
-  late Process? pythonProcess;
+  ProcessState routerProcessState = ProcessState.wait;
+  String routerDisabledMessage = "라우터 미동작\n초기 오버레이 메세지";
+  Process? routerProcess;
   StreamSubscription<String>? stdoutSub;
   StreamSubscription<String>? stderrSub;
 
@@ -141,44 +152,70 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
   }
 
   Future<void> routerStart() async {
-    pythonProcess = await Process.start('bin/router.exe', []);
-    stderrSub = pythonProcess!.stderr
-        .transform(utf8.decoder)
-        .transform(const LineSplitter())
-        .listen(
-          (line) => _handleError(errorMessage: line, isFromClient: false),
-          onError: (error, stackTrace) {
-            if (error is FormatException) {
-              _handleError(errorMessage: "비정상적인 형식의 값이 전달되었습니다. 통신 연결을 확인해주세요.");
-            } else {
-              _handleError(errorMessage: error.toString(), stackTrace: stackTrace);
-            }
-          },
-        );
-    stdoutSub = pythonProcess!.stdout
-        .transform(utf8.decoder)
-        .transform(const LineSplitter())
-        .listen(
-          (line) => _handleOutput(messageObject: jsonDecode(line)),
-          onError: (error, stackTrace) {
-            if (error is FormatException) {
-              _handleError(errorMessage: "비정상적인 형식의 값이 전달되었습니다. 통신 연결을 확인해주세요.");
-            } else {
-              _handleError(errorMessage: error.toString(), stackTrace: stackTrace);
-            }
-          },
-        );
+    try {
+      routerProcess = await Process.start('bin/router.exe', []);
+      if (routerProcess != null) {
+        routerDisabledMessage = "비정상적으로 오버레이가 열림";
+        setState(() => routerProcessState = ProcessState.enabled);
+      }
+      stderrSub = routerProcess!.stderr
+          .transform(utf8.decoder)
+          .transform(const LineSplitter())
+          .listen(
+            (line) => _handleError(errorMessage: line, isFromClient: false),
+            onError: (error, stackTrace) {
+              if (error is FormatException) {
+                _handleError(errorMessage: "비정상적인 형식의 값이 전달되었습니다. 통신 연결을 확인해주세요.");
+              } else {
+                _handleError(errorMessage: error.toString(), stackTrace: stackTrace);
+              }
+            },
+          );
+      stdoutSub = routerProcess!.stdout
+          .transform(utf8.decoder)
+          .transform(const LineSplitter())
+          .listen(
+            (line) => _handleOutput(messageObject: jsonDecode(line)),
+            onError: (error, stackTrace) {
+              if (error is FormatException) {
+                _handleError(errorMessage: "비정상적인 형식의 값이 전달되었습니다. 통신 연결을 확인해주세요.");
+              } else {
+                _handleError(errorMessage: error.toString(), stackTrace: stackTrace);
+              }
+            },
+          );
+      // 앱 실행 도중 프로세스가 종료된 경우
+      // 정상종료: exitCode = -1
+      routerProcess!.exitCode.then((exitCode) {
+        if (exitCode != -1) {_handleError(errorMessage: "비정상종료, ExitCode:$exitCode");}
+      });
+
+    } on ProcessException catch (error/*, stackTrace*/) {
+      routerDisabledMessage = "라우터 연결 불가\n\n라우터 실행파일을 확인한 뒤\n아래 버튼을 누르거나 앱을 재실행바랍니다.";
+      setState(() => routerProcessState = ProcessState.disabled);
+      _handleError(errorMessage: "Process Error Code: ${error.errorCode}, Message: ${error.message}\n$error", /*stackTrace: stackTrace*/); // 임시 stackTrace 비가시화
+      routerExit();
+    } catch (error, stackTrace) {
+      routerDisabledMessage = "라우터 동작 불가\n\n라우터 동작 중 예기지 못한 프로세스 또는 스트림 오류 발생\n\n앱을 종료하고 재시작바랍니다.";
+      setState(() => routerProcessState = ProcessState.disabledFromUnknown);
+      _handleError(errorMessage: error.toString(), stackTrace: stackTrace);
+      routerExit();
+    }
   }
 
   Future<void> routerExit() async {
     await stdoutSub?.cancel();
     await stderrSub?.cancel();
-    pythonProcess?.kill();
+    if (routerProcess != null) {
+      routerProcess!.kill();
+      final exitCode = await routerProcess!.exitCode; // 프로세스 정상 종료까지 대기
+      if (exitCode != -1) {_handleError(errorMessage: "비정상종료, ExitCode:$exitCode");}
+    }
   }
 
   void portScan() async {
     Map<String,dynamic> messageObject = const {"CMD": "LIST"};
-    pythonProcess?.stdin.writeln(jsonEncode(messageObject));
+    routerProcess?.stdin.writeln(jsonEncode(messageObject));
     _handleOutput(messageObject: messageObject, isFromClient: true);
   }
 
@@ -187,7 +224,7 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
     if (_formKey.currentState!.validate()) {
       final baud = (selectedBaud == 'custom') ? customBaudController.text : selectedBaud;
       Map<String,dynamic> messageObject = {"CMD":"OPEN","PORT":selectedPort!,"BAUD":baud};
-      pythonProcess?.stdin.writeln(jsonEncode(messageObject));
+      routerProcess?.stdin.writeln(jsonEncode(messageObject));
       _handleOutput(messageObject: messageObject, isFromClient: true);
     } else {
       if (selectedPort == null) { // port 없음
@@ -202,7 +239,7 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
     // 유효성 검사 => focus 이동
     if (_formKey.currentState!.validate()) {
       Map<String,dynamic> messageObject = {"CMD": "CLOSE", "PORT":selectedPort!};
-      pythonProcess?.stdin.writeln(jsonEncode(messageObject));
+      routerProcess?.stdin.writeln(jsonEncode(messageObject));
       _handleOutput(messageObject: messageObject, isFromClient: true);
     } else {
       if (selectedPort == null) { // port 없음
@@ -227,7 +264,7 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
       buffer.write(byte.toRadixString(16).padLeft(2, '0'));
     }
     Map<String,dynamic> messageObject = {"CMD": "WRITE", "DATA": buffer.toString()};
-    pythonProcess?.stdin.writeln(jsonEncode(messageObject)); // string -> hex-string
+    routerProcess?.stdin.writeln(jsonEncode(messageObject)); // string -> hex-string
     _handleOutput(messageObject: {"CMD": "WRITE", "DATA": data}, isFromClient: true); // string -> string
     inputController.clear();
   }
@@ -246,7 +283,20 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
           logMessage = messageObject["DATA"];
           isFromPort = true;
           break;
-        case "INIT": logMessage = "Router 준비 완료"; break;
+        case "INIT":
+          if (routerMinVersion.compareTo(messageObject["VERSION"] ?? "") > 0) {
+            routerDisabledMessage = "라우터 연결 불가\n\n라우터 실행파일을 확인한 뒤\n아래 버튼을 누르거나 앱을 재실행바랍니다.\n\n실행중인 라우터 버전:(${messageObject["VERSION"]}), 실행가능 최소 버전:($routerMinVersion)";
+            setState(() => routerProcessState = ProcessState.disabled);
+            _handleError(
+              errorMessage: "라우터 버전 호환 불가. 실행중인 라우터 버전:(${messageObject["VERSION"]}), 실행가능 최소 버전:($routerMinVersion)",
+              isFromClient: isFromClient
+            );
+            routerExit();
+            return;
+          } else {
+            logMessage = "Router 준비 완료";
+          }
+          break;
         case "OPENED":
           setState(() => isConnected = true);
           logMessage = "Port (${messageObject["PORT"] ?? "(No Port)"}) 연결 성공";
@@ -596,20 +646,58 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
 
   @override
   Widget build(BuildContext context) {
+    late Widget routerDisableOverlay;
+    if (routerProcessState != ProcessState.enabled) {
+      switch (routerProcessState) {
+        case ProcessState.wait:
+          routerDisableOverlay = const Center(child: CircularProgressIndicator());
+          break;
+        case ProcessState.disabled:
+          routerDisableOverlay = Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              spacing: 16.0,
+              children: [
+                Text(routerDisabledMessage),
+                ElevatedButton(onPressed: routerStart, child: const Text("재실행")),
+              ],
+            ),
+          );
+          break;
+        case ProcessState.disabledFromUnknown:
+          routerDisableOverlay = Center(
+            child: Text(routerDisabledMessage),
+          );
+          break;
+        default:
+          break;
+      }
+    }
     return Scaffold(
       appBar: AppBar(title: const Text('Serial Monitor')),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          spacing: 0.0,
-          children: [
-            buildToolbar(),
-            const Divider(),
-            buildTopControls(),
-            buildOutputLog(),
-            buildBottomInput(),
+      body: Stack(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              spacing: 0.0,
+              children: [
+                buildToolbar(),
+                const Divider(),
+                buildTopControls(),
+                buildOutputLog(),
+                buildBottomInput(),
+              ],
+            ),
+          ),
+          // 라우터 연결 확인 오버레이
+          if (routerProcessState != ProcessState.enabled) ...[
+            Positioned.fill(child: Container(
+              color: Colors.black54,
+              child: routerDisableOverlay,
+            ))
           ],
-        ),
+        ],
       ),
     );
   }
