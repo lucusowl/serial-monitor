@@ -95,9 +95,12 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
   bool autoScroll = true;
   bool showDetail = false;
 
-  final TextEditingController inputController = TextEditingController();
+  final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
   final TextEditingController customBaudController = TextEditingController();
+  final TextEditingController inputController = TextEditingController();
   final ScrollController scrollController = ScrollController();
+  late final FocusNode _portFieldFocusNode = FocusNode();
+  late final FocusNode _baudCustomFieldFocusNode = FocusNode();
 
   bool flagDataLineFeed = true;
   final List<_LogEntry> log = [];
@@ -117,6 +120,8 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
     inputController.dispose();
     scrollController.dispose();
     customBaudController.dispose();
+    _portFieldFocusNode.dispose();
+    _baudCustomFieldFocusNode.dispose();
     routerExit();
     super.dispose();
   }
@@ -164,26 +169,33 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
   }
 
   void portConnect() async {
-    if (selectedPort == null || (selectedBaud == 'custom' && customBaudController.text.isEmpty)) {
-      // TODO: 부족한 입력 처리(포커스 이동, 등)
-      return;
+    // 유효성 검사 => focus 이동
+    if (_formKey.currentState!.validate()) {
+      final baud = (selectedBaud == 'custom') ? customBaudController.text : selectedBaud;
+      Map<String,dynamic> messageObject = {"CMD":"OPEN","PORT":selectedPort!,"BAUD":baud};
+      pythonProcess?.stdin.writeln(jsonEncode(messageObject));
+      _handleOutput(messageObject: messageObject, isFromClient: true);
+    } else {
+      if (selectedPort == null) { // port 없음
+        FocusScope.of(context).requestFocus(_portFieldFocusNode);
+      } else if (selectedBaud == 'custom') { // baud custom 값이 불가
+        FocusScope.of(context).requestFocus(_baudCustomFieldFocusNode);
+      }
     }
-
-    final baud = (selectedBaud == 'custom') ? customBaudController.text : selectedBaud;
-    // 유효성 검사 처리
-    Map<String,dynamic> messageObject = {"CMD":"OPEN","PORT":selectedPort!,"BAUD":baud};
-    pythonProcess?.stdin.writeln(jsonEncode(messageObject));
-    _handleOutput(messageObject: messageObject, isFromClient: true);
   }
 
   void portDisconnect() {
-    if (selectedPort == null) {
-      // TODO: 유효성 에러 처리
-      return;
+    // 유효성 검사 => focus 이동
+    if (_formKey.currentState!.validate()) {
+      Map<String,dynamic> messageObject = {"CMD": "CLOSE", "PORT":selectedPort!};
+      pythonProcess?.stdin.writeln(jsonEncode(messageObject));
+      _handleOutput(messageObject: messageObject, isFromClient: true);
+    } else {
+      if (selectedPort == null) { // port 없음
+        FocusScope.of(context).requestFocus(_portFieldFocusNode);
+        _handleError(errorMessage: "연결 해제할 Port가 지정되어 있지 않습니다. Port 목록을 갱신해주세요.");
+      }
     }
-    Map<String,dynamic> messageObject = {"CMD": "CLOSE", "PORT":selectedPort!};
-    pythonProcess?.stdin.writeln(jsonEncode(messageObject));
-    _handleOutput(messageObject: messageObject, isFromClient: true);
   }
 
   void sendData() {
@@ -206,10 +218,6 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
     inputController.clear();
   }
 
-  /// 인자 유효성  
-  /// 프로토콜 구분  
-  /// 프로토콜 메세지 설정  
-  /// 구분된 프로토콜 각 후처리 설정  
   void _handleOutput({
     required Map<String,dynamic> messageObject,
     bool isFromClient = false,
@@ -261,17 +269,17 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
             }
             if (!flagPortInclude) {selectedPort = null;}
           }
-          logMessage = "연결 가능 Port 목록 갱신 성공";
+          logMessage = "연결 가능 Port 목록 갱신";
           break;
         case "ALERT": logMessage = messageObject["MESSAGE"]; break;
         case "ERROR":
           _handleError(
             errorMessage: messageObject["MESSAGE"],
-            // traceback: messageObject["TRACEBACK"],
+            stackTrace: messageObject["TRACEBACK"],
             isFromClient: isFromClient,
           );
-          break;
-        default: 
+          return;
+        default:
           _handleError(
             errorMessage: "Invalid Protocol Detected. Type (${messageObject['EVENT']}) of EVENT is not exist",
             isFromClient: isFromClient
@@ -428,30 +436,67 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
     }
   }
 
-  Widget buildToolbar() => Row(
-    spacing: 8.0,
-    children: [
-      ElevatedButton(onPressed: portScan, child: const Text('스캔')),
-      DropdownButton<String>(
-        padding: const EdgeInsets.symmetric(horizontal: 8.0),
-        hint: const Text('Select Port'),
-        value: selectedPort,
-        onChanged: (val) => setState(() => selectedPort = val),
-        items: portEntries.map((e) => DropdownMenuItem(value: e.device, child: Row(spacing: 8.0, children: [Icon(Icons.usb), Text(e.device)]))).toList(),
-        // TODO: 인식된 디바이스 정보 표기, e.g. 'COM6 (Arduino Uno)'
-      ),
-      DropdownButton<String>(
-        padding: const EdgeInsets.symmetric(horizontal: 8.0),
-        value: selectedBaud,
-        onChanged: (val) => setState(() => selectedBaud = val!),
-        items: baudRates.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
-      ),
-      if (selectedBaud == 'custom')
-        SizedBox(width: 80, child: TextField(controller: customBaudController, keyboardType: TextInputType.number)),
-      (isConnected)
-        ? ElevatedButton(onPressed: portDisconnect, child: const Text('해제'))
-        : ElevatedButton(onPressed: portConnect, child: const Text('연결')),
-    ],
+  Widget buildToolbar() => Form(
+    key: _formKey,
+    child: Row(
+      spacing: 8.0,
+      children: [
+        ElevatedButton(onPressed: portScan, child: const Text('스캔')),
+        SizedBox(
+          width: 150,
+          child: DropdownButtonFormField<String>(
+            focusNode: _portFieldFocusNode,
+            padding: const EdgeInsets.symmetric(horizontal: 8.0),
+            hint: const Text('Select Port'),
+            value: selectedPort,
+            onChanged: (isConnected) ? null : (val) => setState(() => selectedPort = val),
+            validator: (value) => (value == null) ? 'Port 미선택' : null,
+            items: portEntries.map((e) => DropdownMenuItem(
+                value: e.device,
+                child: Row(
+                  spacing: 8.0,
+                  children: [
+                    Tooltip(
+                      child: const Icon(Icons.usb)
+                    ),
+                    Text(e.device)
+                  ]
+                )
+              )).toList(),
+          ),
+        ),
+        SizedBox(
+          width: 95,
+          child: DropdownButtonFormField<String>(
+            padding: const EdgeInsets.symmetric(horizontal: 8.0),
+            value: selectedBaud,
+            onChanged: (isConnected) ? null : (val) => setState(() => selectedBaud = val!),
+            items: baudRates.map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
+          ),
+        ),
+        if (selectedBaud == 'custom')
+          SizedBox(
+            width: 80,
+            child: TextFormField(
+              controller: customBaudController,
+              focusNode: _baudCustomFieldFocusNode,
+              keyboardType: TextInputType.number,
+              validator: (value) {
+                if (value == null || value.isEmpty) {
+                  return 'baud 미입력';
+                } else if (int.tryParse(value) == null) {
+                  return '비정수형 입력';
+                } else {
+                  return null;
+                }
+              },
+            )
+          ),
+        (isConnected)
+          ? ElevatedButton(onPressed: portDisconnect, child: const Text('해제'))
+          : ElevatedButton(onPressed: portConnect, child: const Text('연결')),
+      ],
+    ),
   );
 
   Widget buildTopControls() => Row(
