@@ -500,6 +500,29 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
     }
   }
 
+  Future<bool> _confirmDialog(String confirmContent) async {
+    final bool? result = await showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text("주의"),
+          content: Text(confirmContent),
+          actions: [
+            TextButton(
+              onPressed: () {Navigator.of(context).pop(true);},
+              child: const Text("확인"),
+            ),
+            TextButton(
+              onPressed: () {Navigator.of(context).pop();},
+              child: const Text("취소"),
+            )
+          ],
+        );
+      }
+    );
+    return (result == true);
+  }
+
   Widget buildToolbar() => Form(
     key: _formKey,
     child: Row(
@@ -579,7 +602,11 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
       ),
       IconButton(
         icon: const Icon(Icons.delete),
-        onPressed: () => setState(() => log.clear()),
+        onPressed: () async {
+          if(await _confirmDialog("정말로 모든 출력을 지우시겠습니까?")){
+            setState(() => log.clear());
+          }
+        },
         tooltip: '모든 출력 지우기'
       )
     ],
