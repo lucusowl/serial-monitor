@@ -2,7 +2,8 @@
 ![GitHub Release](https://img.shields.io/github/v/release/lucusowl/serial-monitor)
 ![GitHub License](https://img.shields.io/github/license/lucusowl/serial-monitor)
 
-**Serial Monitor**는 다양한 시리얼 장치를 실시간으로 연결하고 데이터를 송수신할 수 있도록 도와주는 간단한 터미널 도구입니다. 시리얼 포트 선택, 전송속도 설정, 실시간 로그 확인, 등 직관적인 UI로 시리얼 통신 환경을 제공합니다.  
+**Serial Monitor**는 시리얼 장치를 탐색 및 연결하고 실시간으로 데이터를 송수신할 수 있도록 도와주는 간단한 터미널 도구입니다.  
+시리얼 포트 선택, 전송속도 설정, 실시간 로그 확인, 등 직관적인 UI로 시리얼 통신 환경을 제공합니다.  
 이 도구는 Flutter를 기반으로 제작되었습니다.  
 
 ## 설치 및 사용 Installation & Usage
@@ -33,5 +34,5 @@
 
 ## 라이선스 License
 
-본 프로젝트는 [MIT License](LICENSE) 하에 배포됩니다.
+본 프로젝트는 [MIT License](LICENSE) 하에 배포됩니다.  
 third-party 라이선스는 [NOTICE](NOTICE) 파일에도 요약·고지되어 있습니다.   
