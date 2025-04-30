@@ -5,12 +5,12 @@ import traceback
 from serial import Serial
 from serial.tools import list_ports
 
-__version__ = "v0.5.3"
+__version__ = "v1.0.0"
 
 def list_ports_cmd():
     ports = [
         {
-            "DEVICE":p.device, # name to Serial
+            "DEVICE":p.device, # ID of Serial Port
             "name":p.name,
             "description":p.description,
             "hwid":p.hwid,

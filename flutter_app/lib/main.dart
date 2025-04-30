@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 
-const routerMinVersion = "v0.5.3";
+const routerMinVersion = "v1.0.0";
 
 class _PortEntry {
   final String device;
@@ -66,10 +66,10 @@ class _LogEntry {
 }
 
 enum ProcessState {
-  wait,
-  enabled,
-  disabled,
-  disabledFromUnknown, // 예기지 못한 오류
+  wait,                 // 대기 (초기)
+  enabled,              // 활성화
+  disabled,             // 비활성화
+  disabledFromUnknown,  // 예기지 못한 오류로 비활성화
 }
 
 void main() => runApp(const SerialMonitorApp());
@@ -284,6 +284,7 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
           isFromPort = true;
           break;
         case "INIT":
+          // 버전 호환 확인
           if (routerMinVersion.compareTo(messageObject["VERSION"] ?? "") > 0) {
             routerDisabledMessage = "라우터 연결 불가\n\n라우터 실행파일을 확인한 뒤\n아래 버튼을 누르거나 앱을 재실행바랍니다.\n\n실행중인 라우터 버전:(${messageObject["VERSION"]}), 실행가능 최소 버전:($routerMinVersion)";
             setState(() => routerProcessState = ProcessState.disabled);
@@ -323,6 +324,7 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
               interface: portInfo["interface"],
             ));
           }
+          // 이전에 선택한 옵션이 있을 경우, 초기화 여부 확인
           if (selectedPort != null) {
             bool flagPortInclude = false;
             for (_PortEntry port in portEntries) {
@@ -692,11 +694,10 @@ class _SerialMonitorScreenState extends State<SerialMonitorScreen> {
           );
           break;
         case ProcessState.disabledFromUnknown:
+        default:
           routerDisableOverlay = Center(
             child: Text(routerDisabledMessage),
           );
-          break;
-        default:
           break;
       }
     }

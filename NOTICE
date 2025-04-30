@@ -1,0 +1,10 @@
+This product bundles third-party components:
+
+1. pySerial (BSD-3-Clause)
+   SPDX-License-Identifier: BSD-3-Clause
+   https://github.com/pyserial/pyserial/blob/master/LICENSE
+   ./backend_app/LICENSE.pyserial.txt
+
+2. PyInstaller (GPL-2.0 WITH Commercial Exception)
+   SPDX-License-Identifier: GPL-2.0-only
+   With exception: https://github.com/pyinstaller/pyinstaller#license
